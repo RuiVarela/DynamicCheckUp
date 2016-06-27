@@ -1,0 +1,90 @@
+#!/usr/bin/perl
+
+use strict;
+use warnings;
+    
+my $check_up_output = "memory_check_up.txt";
+my $shared_object_name = "DynamicCheckUp.so";
+my $address_resolution = "addr2line --demangle --functions --exe=";
+my $run_tracing = 1;
+my $do_echo = 1;
+
+sub trim($)
+{
+	my $string = shift;
+	$string =~ s/^\s+//;
+	$string =~ s/\s+$//;
+	return $string;
+}
+
+#
+# Launch application with LD_PRELOAD
+#
+use FindBin qw($Bin);
+
+my $number_of_arguments = @ARGV;
+die "Usage: $0  <application> <application_parameters>\n" unless ($number_of_arguments >= 1);
+
+my $application_execution_string = "@ARGV";
+my $application_name = shift(@ARGV);
+my $shared_object = "$Bin/$shared_object_name";
+
+if ($run_tracing)
+{
+	die "Error: $shared_object_name was not found.\n" unless (-e $shared_object);
+	$ENV{LD_PRELOAD}=$shared_object;
+	system($application_execution_string);
+	$ENV{LD_PRELOAD}="";
+}
+
+#
+# Parse CheckUp Output File
+#
+open(my $in, "<", $check_up_output) or die "Can't open $check_up_output: $!";
+my @lines = <$in>;
+close $in or die "$in: $!";
+
+open(my $out, ">", $check_up_output) or die "Can't open $check_up_output: $!";
+
+foreach (@lines) 
+{
+	my $line = $_;
+	
+	if ( ($line =~ /Allocation Stack: /) or ($line =~ /Deallocation Stack: /) )
+	{	
+		my $address_list = trim($line);
+		$address_list =~ s/Allocation Stack: //;
+		$address_list =~ s/Deallocation Stack: //;
+		my $address_resolution_command = $address_resolution . $application_name . ' ' . $address_list;
+		
+		if ($line =~ /Allocation Stack: /)
+		{
+			$line = "\tAllocation Stack:\n";
+		}
+		elsif ($line =~ /Deallocation Stack: /)
+		{
+			$line = "\tDeallocation Stack:\n";
+		}
+		
+		open(my $address_execution, "$address_resolution_command |") or die "Cannot resolve addresses";
+		my @resolved_lines = <$address_execution>;
+		close($address_execution);
+		
+		foreach (@resolved_lines) 
+		{
+			my $resolved_line = trim($_);
+			
+			if ( ($resolved_line ne "??") and ($resolved_line ne "??:0"))
+			{
+				$line .= "\t" . $resolved_line . "\n";
+			}
+		}		
+	}
+ 	print $out $line;
+ 	
+ 	if ($do_echo)
+ 	{
+ 		print $line;
+ 	}
+}
+close $out or die "$in: $!";
